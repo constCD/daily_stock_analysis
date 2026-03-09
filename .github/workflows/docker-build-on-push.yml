@@ -178,16 +178,32 @@ jobs:
                 ${{ vars.DEPLOY_SSH_USER }}@${{ vars.DEPLOY_SSH_HOST }} \
                 "docker login ghcr.io -u ${{ github.actor }} --password-stdin"
 
-      - name: 📦 Pull latest image & restart containers
-        env:
-          DOCKER_HOST: ssh://${{ vars.DEPLOY_SSH_USER }}@${{ vars.DEPLOY_SSH_HOST }}
-          GIT_SSH_COMMAND: ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no
-          DEPLOY_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+      - name: 📦 Copy compose file & .env to remote server
         run: |
+          SSH_PORT="${{ secrets.DEPLOY_SSH_PORT }}"
+          SSH_PORT="${SSH_PORT:-22}"
+          # 把 docker-compose.deploy.yml 和 .env 复制到远程服务器
+          scp -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -P "${SSH_PORT}" \
+              ./docker/docker-compose.deploy.yml \
+              /tmp/deploy.env \
+              ${{ vars.DEPLOY_SSH_USER }}@${{ vars.DEPLOY_SSH_HOST }}:/tmp/
+
+      - name: 📦 Pull latest image & restart containers
+        run: |
+          SSH_PORT="${{ secrets.DEPLOY_SSH_PORT }}"
+          SSH_PORT="${SSH_PORT:-22}"
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -p "${SSH_PORT}" \
+              ${{ vars.DEPLOY_SSH_USER }}@${{ vars.DEPLOY_SSH_HOST }} << 'SSHEOF'
           set -e
+          DEPLOY_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+
           echo "📦 拉取最新镜像并重启容器..."
-          docker compose \
-            -f ./docker/docker-compose.deploy.yml \
+          DEPLOY_IMAGE="$DEPLOY_IMAGE" docker compose \
+            -f /tmp/docker-compose.deploy.yml \
             --env-file /tmp/deploy.env \
             up -d --pull always server analyzer
 
@@ -195,10 +211,14 @@ jobs:
           docker image prune -f
 
           echo "✅ 部署完成！运行状态："
-          docker compose \
-            -f ./docker/docker-compose.deploy.yml \
+          DEPLOY_IMAGE="$DEPLOY_IMAGE" docker compose \
+            -f /tmp/docker-compose.deploy.yml \
             --env-file /tmp/deploy.env \
             ps
+
+          echo "🧹 清理临时文件..."
+          rm -f /tmp/docker-compose.deploy.yml /tmp/deploy.env
+          SSHEOF
 
       - name: 🔒 Clean up
         if: always()
