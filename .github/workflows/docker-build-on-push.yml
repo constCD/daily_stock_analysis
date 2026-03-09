@@ -29,8 +29,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 🔧 Set up QEMU (multi-arch support)
-        uses: docker/setup-qemu-action@v3
 
       - name: 🔧 Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -59,7 +57,7 @@ jobs:
         with:
           context: .
           file: docker/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -95,19 +93,22 @@ jobs:
 
       - name: 🔑 Configure SSH key
         run: |
+          SSH_PORT="${{ secrets.DEPLOY_SSH_PORT }}"
+          SSH_PORT="${SSH_PORT:-22}"
           mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -p ${{ secrets.DEPLOY_SSH_PORT || 22 }} \
-            "${{ secrets.DEPLOY_SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -p "${SSH_PORT}" "${{ vars.DEPLOY_SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: 📝 Write .env to remote server
         run: |
+          SSH_PORT="${{ secrets.DEPLOY_SSH_PORT }}"
+          SSH_PORT="${SSH_PORT:-22}"
           # 从各个独立 Secret / Variable 拼装 .env，写入远程服务器
           ssh -i ~/.ssh/deploy_key \
               -o StrictHostKeyChecking=no \
-              -p ${{ secrets.DEPLOY_SSH_PORT || 22 }} \
-              ${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }} \
+              -p "${SSH_PORT}" \
+              ${{ vars.DEPLOY_SSH_USER }}@${{ vars.DEPLOY_SSH_HOST }} \
               "cat > /tmp/deploy.env" << 'ENVEOF'
           STOCK_LIST=${{ vars.STOCK_LIST }}
           TUSHARE_TOKEN=${{ secrets.TUSHARE_TOKEN }}
@@ -129,9 +130,9 @@ jobs:
           FEISHU_WEBHOOK_URL=${{ secrets.FEISHU_WEBHOOK_URL }}
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
-          EMAIL_SENDER=${{ secrets.EMAIL_SENDER }}
+          EMAIL_SENDER=${{ vars.EMAIL_SENDER }}
           EMAIL_PASSWORD=${{ secrets.EMAIL_PASSWORD }}
-          EMAIL_RECEIVERS=${{ secrets.EMAIL_RECEIVERS }}
+          EMAIL_RECEIVERS=${{ vars.EMAIL_RECEIVERS }}
           DISCORD_WEBHOOK_URL=${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_BOT_TOKEN=${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_MAIN_CHANNEL_ID=${{ secrets.DISCORD_MAIN_CHANNEL_ID }}
@@ -165,12 +166,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
         env:
-          DOCKER_HOST: ssh://${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}:${{ secrets.DEPLOY_SSH_PORT || 22 }}
+          DOCKER_HOST: ssh://${{ vars.DEPLOY_SSH_USER }}@${{ vars.DEPLOY_SSH_HOST }}
           GIT_SSH_COMMAND: ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no
 
       - name: 📦 Pull latest image & restart containers
         env:
-          DOCKER_HOST: ssh://${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}:${{ secrets.DEPLOY_SSH_PORT || 22 }}
+          DOCKER_HOST: ssh://${{ vars.DEPLOY_SSH_USER }}@${{ vars.DEPLOY_SSH_HOST }}
           GIT_SSH_COMMAND: ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no
           DEPLOY_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
         run: |
@@ -189,16 +190,18 @@ jobs:
       - name: 🔒 Clean up
         if: always()
         run: |
+          SSH_PORT="${{ secrets.DEPLOY_SSH_PORT }}"
+          SSH_PORT="${SSH_PORT:-22}"
           rm -f ~/.ssh/deploy_key
           ssh -i ~/.ssh/deploy_key \
               -o StrictHostKeyChecking=no \
-              -p ${{ secrets.DEPLOY_SSH_PORT || 22 }} \
-              ${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }} \
+              -p "${SSH_PORT}" \
+              ${{ vars.DEPLOY_SSH_USER }}@${{ vars.DEPLOY_SSH_HOST }} \
               "rm -f /tmp/deploy.env" 2>/dev/null || true
 
       - name: 📋 Deploy Summary
         run: |
           echo "### 🚀 部署完成" >> $GITHUB_STEP_SUMMARY
-          echo "**服务器:** \`${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**服务器:** \`${{ vars.DEPLOY_SSH_USER }}@${{ vars.DEPLOY_SSH_HOST }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**镜像:** \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest\`" >> $GITHUB_STEP_SUMMARY
           echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
