@@ -5,30 +5,65 @@
 # 此文件专用于 GitHub Actions 自动部署，不用于本地开发。
 # 本地开发请使用 docker-compose.yml（本地构建）。
 #
-# 与 docker-compose.yml 的区别：
-#   - image: 直接使用 CI 推送到 GHCR 的镜像，不在服务器上构建
-#   - env_file: 使用 CI 动态写入的临时 .env 文件
-#   - volumes: 使用 Docker named volume，与服务器目录结构无关
-#
 # 运行方式（由 CI 自动调用，无需手动执行）：
 #   DEPLOY_IMAGE=ghcr.io/xxx/yyy:latest \
-#   docker compose -f docker/docker-compose.deploy.yml up -d server analyzer
-
-version: '3.8'
+#   docker compose -f docker/docker-compose.deploy.yml --env-file /tmp/deploy.env up -d server analyzer
 
 x-common: &common
   image: ${DEPLOY_IMAGE}
   restart: unless-stopped
-  env_file:
-    - /tmp/deploy.env
+  environment:
+    - TZ=Asia/Shanghai
+    - WEBUI_HOST=0.0.0.0
+    - STOCK_LIST=${STOCK_LIST}
+    - TUSHARE_TOKEN=${TUSHARE_TOKEN}
+    - GEMINI_API_KEY=${GEMINI_API_KEY}
+    - GEMINI_MODEL=${GEMINI_MODEL}
+    - GEMINI_MODEL_FALLBACK=${GEMINI_MODEL_FALLBACK}
+    - GEMINI_TEMPERATURE=${GEMINI_TEMPERATURE}
+    - AIHUBMIX_KEY=${AIHUBMIX_KEY}
+    - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    - ANTHROPIC_MODEL=${ANTHROPIC_MODEL}
+    - OPENAI_API_KEY=${OPENAI_API_KEY}
+    - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+    - OPENAI_MODEL=${OPENAI_MODEL}
+    - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE}
+    - TAVILY_API_KEYS=${TAVILY_API_KEYS}
+    - SERPAPI_API_KEYS=${SERPAPI_API_KEYS}
+    - BRAVE_API_KEYS=${BRAVE_API_KEYS}
+    - WECHAT_WEBHOOK_URL=${WECHAT_WEBHOOK_URL}
+    - FEISHU_WEBHOOK_URL=${FEISHU_WEBHOOK_URL}
+    - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+    - EMAIL_SENDER=${EMAIL_SENDER}
+    - EMAIL_PASSWORD=${EMAIL_PASSWORD}
+    - EMAIL_RECEIVERS=${EMAIL_RECEIVERS}
+    - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+    - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+    - DISCORD_MAIN_CHANNEL_ID=${DISCORD_MAIN_CHANNEL_ID}
+    - DINGTALK_APP_KEY=${DINGTALK_APP_KEY}
+    - DINGTALK_APP_SECRET=${DINGTALK_APP_SECRET}
+    - CUSTOM_WEBHOOK_URLS=${CUSTOM_WEBHOOK_URLS}
+    - PUSHOVER_USER_KEY=${PUSHOVER_USER_KEY}
+    - PUSHOVER_API_TOKEN=${PUSHOVER_API_TOKEN}
+    - PUSHPLUS_TOKEN=${PUSHPLUS_TOKEN}
+    - SERVERCHAN3_SENDKEY=${SERVERCHAN3_SENDKEY}
+    - FEISHU_APP_ID=${FEISHU_APP_ID}
+    - FEISHU_APP_SECRET=${FEISHU_APP_SECRET}
+    - ADMIN_AUTH_ENABLED=${ADMIN_AUTH_ENABLED}
+    - SCHEDULE_ENABLED=${SCHEDULE_ENABLED}
+    - SCHEDULE_TIME=${SCHEDULE_TIME}
+    - MARKET_REVIEW_ENABLED=${MARKET_REVIEW_ENABLED}
+    - AGENT_SKILLS=${AGENT_SKILLS}
+    - LOG_LEVEL=${LOG_LEVEL}
+    - MAX_WORKERS=${MAX_WORKERS}
+    - WEBUI_PORT=${WEBUI_PORT:-8000}
+    - DATABASE_PATH=./data/stock_analysis.db
+    - LOG_DIR=./logs
   volumes:
     - stock_data:/app/data
     - stock_logs:/app/logs
     - stock_reports:/app/reports
-    - /tmp/deploy.env:/app/.env
-  environment:
-    - TZ=Asia/Shanghai
-    - WEBUI_HOST=0.0.0.0
   logging:
     driver: "json-file"
     options:
