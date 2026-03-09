@@ -158,6 +158,7 @@ jobs:
             FEISHU_APP_ID=${{ secrets.FEISHU_APP_ID }}
             FEISHU_APP_SECRET=${{ secrets.FEISHU_APP_SECRET }}
             STOCK_LIST=${{ secrets.STOCK_LIST }}
+            LLM_ARK_API_KEY=${{ secrets.LLM_ARK_API_KEY }}
         run: |
           # 第一步：从 .env.example 提取所有变量名和默认值作为基础
           grep -E '^[A-Z_]+=.*' .env.example | grep -v '^#' > /tmp/deploy.env || true
