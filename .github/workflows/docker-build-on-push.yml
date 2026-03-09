@@ -96,9 +96,23 @@ jobs:
           SSH_PORT="${{ secrets.DEPLOY_SSH_PORT }}"
           SSH_PORT="${SSH_PORT:-22}"
           mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          # 直接用 echo 写入，GitHub Actions 会保留原始内容（含换行）
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+          # 验证私钥格式是否正确
+          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null && echo "✅ 私钥格式正确" || (echo "❌ 私钥格式错误" && exit 1)
           ssh-keyscan -p "${SSH_PORT}" "${{ vars.DEPLOY_SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: 🔌 Test SSH connection
+        run: |
+          SSH_PORT="${{ secrets.DEPLOY_SSH_PORT }}"
+          SSH_PORT="${SSH_PORT:-22}"
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=10 \
+              -p "${SSH_PORT}" \
+              ${{ vars.DEPLOY_SSH_USER }}@${{ vars.DEPLOY_SSH_HOST }} \
+              "echo '✅ SSH 连接成功，主机: $(hostname)'"
 
       - name: 📝 Prepare .env file
         run: |
