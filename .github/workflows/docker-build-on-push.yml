@@ -29,6 +29,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: 🔡 Set lowercase image name
+        id: image
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
 
       - name: 🔧 Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -46,7 +50,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
           tags: |
             type=raw,value=latest
             type=sha,format=short
@@ -88,6 +92,10 @@ jobs:
     environment: production
 
     steps:
+      - name: 🔡 Set lowercase image name
+        id: image
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
       - name: 📥 Checkout（获取 docker-compose.yml）
         uses: actions/checkout@v4
 
@@ -194,15 +202,17 @@ jobs:
         run: |
           SSH_PORT="${{ secrets.DEPLOY_SSH_PORT }}"
           SSH_PORT="${SSH_PORT:-22}"
+          DEPLOY_IMAGE="${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:latest"
           ssh -i ~/.ssh/deploy_key \
               -o StrictHostKeyChecking=no \
               -p "${SSH_PORT}" \
-              ${{ vars.DEPLOY_SSH_USER }}@${{ vars.DEPLOY_SSH_HOST }} << 'SSHEOF'
+              ${{ vars.DEPLOY_SSH_USER }}@${{ vars.DEPLOY_SSH_HOST }} \
+              DEPLOY_IMAGE="${DEPLOY_IMAGE}" \
+              bash -s << 'SSHEOF'
           set -e
-          DEPLOY_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
 
-          echo "📦 拉取最新镜像并重启容器..."
-          DEPLOY_IMAGE="$DEPLOY_IMAGE" docker compose \
+          echo "📦 拉取最新镜像并重启容器: ${DEPLOY_IMAGE}"
+          DEPLOY_IMAGE="${DEPLOY_IMAGE}" docker compose \
             -f /tmp/docker-compose.deploy.yml \
             --env-file /tmp/deploy.env \
             up -d --pull always server analyzer
@@ -211,7 +221,7 @@ jobs:
           docker image prune -f
 
           echo "✅ 部署完成！运行状态："
-          DEPLOY_IMAGE="$DEPLOY_IMAGE" docker compose \
+          DEPLOY_IMAGE="${DEPLOY_IMAGE}" docker compose \
             -f /tmp/docker-compose.deploy.yml \
             --env-file /tmp/deploy.env \
             ps
@@ -229,5 +239,5 @@ jobs:
         run: |
           echo "### 🚀 部署完成" >> $GITHUB_STEP_SUMMARY
           echo "**服务器:** \`${{ vars.DEPLOY_SSH_USER }}@${{ vars.DEPLOY_SSH_HOST }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**镜像:** \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "**镜像:** \`${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:latest\`" >> $GITHUB_STEP_SUMMARY
           echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
