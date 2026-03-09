@@ -123,57 +123,78 @@ jobs:
               "echo '✅ SSH 连接成功，主机: $(hostname)'"
 
       - name: 📝 Prepare .env file
+        env:
+          # vars 整体注入：GitHub Actions 会将所有 Variables 展开到环境变量
+          # 新增 Variable 无需改此文件，只需在 GitHub Variables 中添加即可
+          #
+          # secrets 必须逐个显式引用（GitHub Actions 安全限制），
+          # 用 JSON 格式打包成一个字符串，bash 里统一解析
+          ALL_SECRETS: |
+            TUSHARE_TOKEN=${{ secrets.TUSHARE_TOKEN }}
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+            AIHUBMIX_KEY=${{ secrets.AIHUBMIX_KEY }}
+            ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            TAVILY_API_KEYS=${{ secrets.TAVILY_API_KEYS }}
+            SERPAPI_API_KEYS=${{ secrets.SERPAPI_API_KEYS }}
+            BRAVE_API_KEYS=${{ secrets.BRAVE_API_KEYS }}
+            WECHAT_WEBHOOK_URL=${{ secrets.WECHAT_WEBHOOK_URL }}
+            FEISHU_WEBHOOK_URL=${{ secrets.FEISHU_WEBHOOK_URL }}
+            TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+            TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+            EMAIL_SENDER=${{ secrets.EMAIL_SENDER }}
+            EMAIL_PASSWORD=${{ secrets.EMAIL_PASSWORD }}
+            EMAIL_RECEIVERS=${{ secrets.EMAIL_RECEIVERS }}
+            DISCORD_WEBHOOK_URL=${{ secrets.DISCORD_WEBHOOK_URL }}
+            DISCORD_BOT_TOKEN=${{ secrets.DISCORD_BOT_TOKEN }}
+            DISCORD_MAIN_CHANNEL_ID=${{ secrets.DISCORD_MAIN_CHANNEL_ID }}
+            DINGTALK_APP_KEY=${{ secrets.DINGTALK_APP_KEY }}
+            DINGTALK_APP_SECRET=${{ secrets.DINGTALK_APP_SECRET }}
+            CUSTOM_WEBHOOK_URLS=${{ secrets.CUSTOM_WEBHOOK_URLS }}
+            PUSHOVER_USER_KEY=${{ secrets.PUSHOVER_USER_KEY }}
+            PUSHOVER_API_TOKEN=${{ secrets.PUSHOVER_API_TOKEN }}
+            PUSHPLUS_TOKEN=${{ secrets.PUSHPLUS_TOKEN }}
+            SERVERCHAN3_SENDKEY=${{ secrets.SERVERCHAN3_SENDKEY }}
+            FEISHU_APP_ID=${{ secrets.FEISHU_APP_ID }}
+            FEISHU_APP_SECRET=${{ secrets.FEISHU_APP_SECRET }}
+            STOCK_LIST=${{ secrets.STOCK_LIST }}
         run: |
-          # 从各个独立 Secret / Variable 拼装 .env，存在 CI runner 本地
-          cat > /tmp/deploy.env << 'ENVEOF'
-          STOCK_LIST=${{ vars.STOCK_LIST }}
-          TUSHARE_TOKEN=${{ secrets.TUSHARE_TOKEN }}
-          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL=${{ vars.GEMINI_MODEL }}
-          GEMINI_MODEL_FALLBACK=${{ vars.GEMINI_MODEL_FALLBACK }}
-          GEMINI_TEMPERATURE=${{ vars.GEMINI_TEMPERATURE }}
-          AIHUBMIX_KEY=${{ secrets.AIHUBMIX_KEY }}
-          ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_MODEL=${{ vars.ANTHROPIC_MODEL }}
-          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL=${{ vars.OPENAI_BASE_URL }}
-          OPENAI_MODEL=${{ vars.OPENAI_MODEL }}
-          OPENAI_TEMPERATURE=${{ vars.OPENAI_TEMPERATURE }}
-          TAVILY_API_KEYS=${{ secrets.TAVILY_API_KEYS }}
-          SERPAPI_API_KEYS=${{ secrets.SERPAPI_API_KEYS }}
-          BRAVE_API_KEYS=${{ secrets.BRAVE_API_KEYS }}
-          WECHAT_WEBHOOK_URL=${{ secrets.WECHAT_WEBHOOK_URL }}
-          FEISHU_WEBHOOK_URL=${{ secrets.FEISHU_WEBHOOK_URL }}
-          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
-          EMAIL_SENDER=${{ vars.EMAIL_SENDER }}
-          EMAIL_PASSWORD=${{ secrets.EMAIL_PASSWORD }}
-          EMAIL_RECEIVERS=${{ vars.EMAIL_RECEIVERS }}
-          DISCORD_WEBHOOK_URL=${{ secrets.DISCORD_WEBHOOK_URL }}
-          DISCORD_BOT_TOKEN=${{ secrets.DISCORD_BOT_TOKEN }}
-          DISCORD_MAIN_CHANNEL_ID=${{ secrets.DISCORD_MAIN_CHANNEL_ID }}
-          DINGTALK_APP_KEY=${{ secrets.DINGTALK_APP_KEY }}
-          DINGTALK_APP_SECRET=${{ secrets.DINGTALK_APP_SECRET }}
-          CUSTOM_WEBHOOK_URLS=${{ secrets.CUSTOM_WEBHOOK_URLS }}
-          PUSHOVER_USER_KEY=${{ secrets.PUSHOVER_USER_KEY }}
-          PUSHOVER_API_TOKEN=${{ secrets.PUSHOVER_API_TOKEN }}
-          PUSHPLUS_TOKEN=${{ secrets.PUSHPLUS_TOKEN }}
-          SERVERCHAN3_SENDKEY=${{ secrets.SERVERCHAN3_SENDKEY }}
-          FEISHU_APP_ID=${{ secrets.FEISHU_APP_ID }}
-          FEISHU_APP_SECRET=${{ secrets.FEISHU_APP_SECRET }}
-          ADMIN_AUTH_ENABLED=${{ vars.ADMIN_AUTH_ENABLED }}
-          SCHEDULE_ENABLED=${{ vars.SCHEDULE_ENABLED }}
-          SCHEDULE_TIME=${{ vars.SCHEDULE_TIME }}
-          MARKET_REVIEW_ENABLED=${{ vars.MARKET_REVIEW_ENABLED }}
-          AGENT_SKILLS=${{ vars.AGENT_SKILLS }}
-          LOG_LEVEL=${{ vars.LOG_LEVEL }}
-          MAX_WORKERS=${{ vars.MAX_WORKERS }}
-          DATABASE_PATH=./data/stock_analysis.db
-          LOG_DIR=./logs
-          TZ=Asia/Shanghai
-          WEBUI_HOST=0.0.0.0
-          WEBUI_PORT=${{ vars.WEBUI_PORT || 8000 }}
-          ENVEOF
+          # 第一步：从 .env.example 提取所有变量名和默认值作为基础
+          grep -E '^[A-Z_]+=.*' .env.example | grep -v '^#' > /tmp/deploy.env || true
+
+          # 第二步：以 .env.example 中的变量名为基准
+          # 从当前环境变量（即 GitHub Variables）中查找同名变量并覆盖
+          while IFS= read -r line; do
+            [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+            key="${line%%=*}"
+            # 查找同名环境变量（来自 vars.*）
+            env_val="${!key}"
+            if [[ -n "$env_val" ]]; then
+              sed -i "/^${key}=/d" /tmp/deploy.env
+              echo "${key}=${env_val}" >> /tmp/deploy.env
+            fi
+          done < .env.example
+
+          # 第三步：解析 ALL_SECRETS，secrets 优先级最高，非空则覆盖
+          while IFS='=' read -r key val; do
+            [[ -z "$key" || -z "$val" ]] && continue
+            key="${key// /}"  # 去除空格
+            sed -i "/^${key}=/d" /tmp/deploy.env
+            echo "${key}=${val}" >> /tmp/deploy.env
+          done <<< "$ALL_SECRETS"
+
+          # 第四步：写入 Docker 部署固定值（始终覆盖）
+          for fixed in \
+            "DATABASE_PATH=./data/stock_analysis.db" \
+            "LOG_DIR=./logs" \
+            "WEBUI_HOST=0.0.0.0"; do
+            key="${fixed%%=*}"
+            sed -i "/^${key}=/d" /tmp/deploy.env
+            echo "$fixed" >> /tmp/deploy.env
+          done
+
+          echo "✅ 最终 .env 变量列表（值已隐藏）："
+          grep -E '^[A-Z_]+=' /tmp/deploy.env | sed 's/=.*/=***/' | sort
 
       - name: 🔐 Log in to GHCR on remote Docker host
         run: |
