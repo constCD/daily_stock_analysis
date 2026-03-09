@@ -124,12 +124,27 @@ jobs:
 
       - name: 📝 Prepare .env file
         env:
-          # vars 整体注入：GitHub Actions 会将所有 Variables 展开到环境变量
-          # 新增 Variable 无需改此文件，只需在 GitHub Variables 中添加即可
-          #
-          # secrets 必须逐个显式引用（GitHub Actions 安全限制），
-          # 用 JSON 格式打包成一个字符串，bash 里统一解析
+          # secrets 和 vars 全部打包进 ALL_SECRETS，bash 统一解析
+          # 同名时后者覆盖前者，所以 secrets 写在 vars 后面实现优先级更高
           ALL_SECRETS: |
+            STOCK_LIST=${{ vars.STOCK_LIST }}
+            GEMINI_MODEL=${{ vars.GEMINI_MODEL }}
+            GEMINI_MODEL_FALLBACK=${{ vars.GEMINI_MODEL_FALLBACK }}
+            GEMINI_TEMPERATURE=${{ vars.GEMINI_TEMPERATURE }}
+            ANTHROPIC_MODEL=${{ vars.ANTHROPIC_MODEL }}
+            OPENAI_BASE_URL=${{ vars.OPENAI_BASE_URL }}
+            OPENAI_MODEL=${{ vars.OPENAI_MODEL }}
+            OPENAI_TEMPERATURE=${{ vars.OPENAI_TEMPERATURE }}
+            ADMIN_AUTH_ENABLED=${{ vars.ADMIN_AUTH_ENABLED }}
+            SCHEDULE_ENABLED=${{ vars.SCHEDULE_ENABLED }}
+            SCHEDULE_TIME=${{ vars.SCHEDULE_TIME }}
+            MARKET_REVIEW_ENABLED=${{ vars.MARKET_REVIEW_ENABLED }}
+            AGENT_SKILLS=${{ vars.AGENT_SKILLS }}
+            LOG_LEVEL=${{ vars.LOG_LEVEL }}
+            MAX_WORKERS=${{ vars.MAX_WORKERS }}
+            WEBUI_PORT=${{ vars.WEBUI_PORT }}
+            EMAIL_SENDER=${{ vars.EMAIL_SENDER }}
+            EMAIL_RECEIVERS=${{ vars.EMAIL_RECEIVERS }}
             TUSHARE_TOKEN=${{ secrets.TUSHARE_TOKEN }}
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
             AIHUBMIX_KEY=${{ secrets.AIHUBMIX_KEY }}
@@ -159,31 +174,19 @@ jobs:
             FEISHU_APP_SECRET=${{ secrets.FEISHU_APP_SECRET }}
             STOCK_LIST=${{ secrets.STOCK_LIST }}
         run: |
-          # 第一步：从 .env.example 提取所有变量名和默认值作为基础
+          # 第一步：从 .env.example 提取默认值作为基础（CI runner 本地有此文件）
           grep -E '^[A-Z_]+=.*' .env.example | grep -v '^#' > /tmp/deploy.env || true
 
-          # 第二步：以 .env.example 中的变量名为基准
-          # 从当前环境变量（即 GitHub Variables）中查找同名变量并覆盖
-          while IFS= read -r line; do
-            [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
-            key="${line%%=*}"
-            # 查找同名环境变量（来自 vars.*）
-            env_val="${!key}"
-            if [[ -n "$env_val" ]]; then
-              sed -i "/^${key}=/d" /tmp/deploy.env
-              echo "${key}=${env_val}" >> /tmp/deploy.env
-            fi
-          done < .env.example
-
-          # 第三步：解析 ALL_SECRETS，secrets 优先级最高，非空则覆盖
+          # 第二步：逐行解析 ALL_SECRETS，非空则覆盖（vars 先、secrets 后，天然实现 secrets 优先）
           while IFS='=' read -r key val; do
-            [[ -z "$key" || -z "$val" ]] && continue
-            key="${key// /}"  # 去除空格
+            key="${key// /}"                      # 去除前后空格
+            [[ -z "$key" || "$key" == \#* ]] && continue  # 跳过空行和注释
+            [[ -z "$val" ]] && continue           # 跳过空值，保留 .env.example 默认值
             sed -i "/^${key}=/d" /tmp/deploy.env
             echo "${key}=${val}" >> /tmp/deploy.env
           done <<< "$ALL_SECRETS"
 
-          # 第四步：写入 Docker 部署固定值（始终覆盖）
+          # 第三步：写入 Docker 部署固定值（始终覆盖）
           for fixed in \
             "DATABASE_PATH=./data/stock_analysis.db" \
             "LOG_DIR=./logs" \
@@ -211,7 +214,6 @@ jobs:
         run: |
           SSH_PORT="${{ secrets.DEPLOY_SSH_PORT }}"
           SSH_PORT="${SSH_PORT:-22}"
-          # 把 docker-compose.deploy.yml 和 .env 复制到远程服务器
           scp -i ~/.ssh/deploy_key \
               -o StrictHostKeyChecking=no \
               -P "${SSH_PORT}" \
@@ -231,6 +233,9 @@ jobs:
               DEPLOY_IMAGE="${DEPLOY_IMAGE}" \
               bash -s << 'SSHEOF'
           set -e
+
+          echo "🔍 检查 /tmp/deploy.env 内容（key 列表）："
+          grep -E '^[A-Z_]+=' /tmp/deploy.env | sed 's/=.*/=***/' | sort
 
           echo "📦 拉取最新镜像并重启容器: ${DEPLOY_IMAGE}"
           DEPLOY_IMAGE="${DEPLOY_IMAGE}" docker compose \
