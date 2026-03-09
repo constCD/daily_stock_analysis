@@ -1,0 +1,63 @@
+# ===================================
+# A股自选股智能分析系统 - CI/CD 远程部署配置
+# ===================================
+#
+# 此文件专用于 GitHub Actions 自动部署，不用于本地开发。
+# 本地开发请使用 docker-compose.yml（本地构建）。
+#
+# 与 docker-compose.yml 的区别：
+#   - image: 直接使用 CI 推送到 GHCR 的镜像，不在服务器上构建
+#   - env_file: 使用 CI 动态写入的临时 .env 文件
+#   - volumes: 使用 Docker named volume，与服务器目录结构无关
+#
+# 运行方式（由 CI 自动调用，无需手动执行）：
+#   DEPLOY_IMAGE=ghcr.io/xxx/yyy:latest \
+#   docker compose -f docker/docker-compose.deploy.yml up -d server analyzer
+
+version: '3.8'
+
+x-common: &common
+  image: ${DEPLOY_IMAGE}
+  restart: unless-stopped
+  env_file:
+    - /tmp/deploy.env
+  volumes:
+    - stock_data:/app/data
+    - stock_logs:/app/logs
+    - stock_reports:/app/reports
+    - /tmp/deploy.env:/app/.env
+  environment:
+    - TZ=Asia/Shanghai
+    - WEBUI_HOST=0.0.0.0
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
+  deploy:
+    resources:
+      limits:
+        memory: 512M
+      reservations:
+        memory: 256M
+
+services:
+  # 定时任务模式：每天 18:00 自动执行分析并推送通知
+  analyzer:
+    <<: *common
+    container_name: stock-analyzer
+    command: ["python", "main.py", "--schedule"]
+
+  # FastAPI 模式：提供 REST API 与 WebUI，可直接 HTTP 请求
+  server:
+    <<: *common
+    container_name: stock-server
+    command: ["python", "main.py", "--serve-only", "--host", "0.0.0.0", "--port", "${API_PORT:-8000}"]
+    ports:
+      - "${API_PORT:-8000}:${API_PORT:-8000}"
+
+volumes:
+  stock_data:
+  stock_logs:
+  stock_reports:
+

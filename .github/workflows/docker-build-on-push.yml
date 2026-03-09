@@ -1,0 +1,204 @@
+name: Docker Build & Push on Main
+
+# 每当 main 分支有新 commit 时触发构建并推送镜像
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: docker-build-on-push-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Set up QEMU (multi-arch support)
+        uses: docker/setup-qemu-action@v3
+
+      - name: 🔧 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 使用 GITHUB_TOKEN 自动密钥登录到 GHCR，无需额外配置
+      - name: 🔐 Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 生成镜像 tag：latest + 短 SHA
+      - name: 🏷️ Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+
+      # 构建并推送多架构镜像到 GHCR
+      - name: 🐳 Build and push multi-arch images
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 📋 Summary
+        run: |
+          echo "### 🎉 Docker Images Built & Pushed" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger:** \`push\` to \`main\` (commit: \`${{ github.sha }}\`)" >> $GITHUB_STEP_SUMMARY
+          echo "**GHCR Tags:**" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+  # -------------------------------------------------------
+  # 部署：通过 SSH Key pair 连接远程 Docker daemon，pull 镜像并重启容器
+  # 需要在仓库 Secrets / Variables 中配置：
+  #   DEPLOY_SSH_HOST  - 远程服务器 IP 或域名
+  #   DEPLOY_SSH_USER  - SSH 用户名，如 ubuntu / root
+  #   DEPLOY_SSH_KEY   - SSH 私钥完整内容（OpenSSH 格式）
+  #   DEPLOY_SSH_PORT  - SSH 端口（可选，默认 22）
+  #   以及所有 .env 中的变量，如 GEMINI_API_KEY、STOCK_LIST 等
+  # -------------------------------------------------------
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: production
+
+    steps:
+      - name: 📥 Checkout（获取 docker-compose.yml）
+        uses: actions/checkout@v4
+
+      - name: 🔑 Configure SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p ${{ secrets.DEPLOY_SSH_PORT || 22 }} \
+            "${{ secrets.DEPLOY_SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: 📝 Write .env to remote server
+        run: |
+          # 从各个独立 Secret / Variable 拼装 .env，写入远程服务器
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -p ${{ secrets.DEPLOY_SSH_PORT || 22 }} \
+              ${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }} \
+              "cat > /tmp/deploy.env" << 'ENVEOF'
+          STOCK_LIST=${{ vars.STOCK_LIST }}
+          TUSHARE_TOKEN=${{ secrets.TUSHARE_TOKEN }}
+          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL=${{ vars.GEMINI_MODEL }}
+          GEMINI_MODEL_FALLBACK=${{ vars.GEMINI_MODEL_FALLBACK }}
+          GEMINI_TEMPERATURE=${{ vars.GEMINI_TEMPERATURE }}
+          AIHUBMIX_KEY=${{ secrets.AIHUBMIX_KEY }}
+          ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL=${{ vars.ANTHROPIC_MODEL }}
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL=${{ vars.OPENAI_BASE_URL }}
+          OPENAI_MODEL=${{ vars.OPENAI_MODEL }}
+          OPENAI_TEMPERATURE=${{ vars.OPENAI_TEMPERATURE }}
+          TAVILY_API_KEYS=${{ secrets.TAVILY_API_KEYS }}
+          SERPAPI_API_KEYS=${{ secrets.SERPAPI_API_KEYS }}
+          BRAVE_API_KEYS=${{ secrets.BRAVE_API_KEYS }}
+          WECHAT_WEBHOOK_URL=${{ secrets.WECHAT_WEBHOOK_URL }}
+          FEISHU_WEBHOOK_URL=${{ secrets.FEISHU_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+          EMAIL_SENDER=${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD=${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECEIVERS=${{ secrets.EMAIL_RECEIVERS }}
+          DISCORD_WEBHOOK_URL=${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_BOT_TOKEN=${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_MAIN_CHANNEL_ID=${{ secrets.DISCORD_MAIN_CHANNEL_ID }}
+          DINGTALK_APP_KEY=${{ secrets.DINGTALK_APP_KEY }}
+          DINGTALK_APP_SECRET=${{ secrets.DINGTALK_APP_SECRET }}
+          CUSTOM_WEBHOOK_URLS=${{ secrets.CUSTOM_WEBHOOK_URLS }}
+          PUSHOVER_USER_KEY=${{ secrets.PUSHOVER_USER_KEY }}
+          PUSHOVER_API_TOKEN=${{ secrets.PUSHOVER_API_TOKEN }}
+          PUSHPLUS_TOKEN=${{ secrets.PUSHPLUS_TOKEN }}
+          SERVERCHAN3_SENDKEY=${{ secrets.SERVERCHAN3_SENDKEY }}
+          FEISHU_APP_ID=${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET=${{ secrets.FEISHU_APP_SECRET }}
+          ADMIN_AUTH_ENABLED=${{ vars.ADMIN_AUTH_ENABLED }}
+          SCHEDULE_ENABLED=${{ vars.SCHEDULE_ENABLED }}
+          SCHEDULE_TIME=${{ vars.SCHEDULE_TIME }}
+          MARKET_REVIEW_ENABLED=${{ vars.MARKET_REVIEW_ENABLED }}
+          AGENT_SKILLS=${{ vars.AGENT_SKILLS }}
+          LOG_LEVEL=${{ vars.LOG_LEVEL }}
+          MAX_WORKERS=${{ vars.MAX_WORKERS }}
+          DATABASE_PATH=./data/stock_analysis.db
+          LOG_DIR=./logs
+          TZ=Asia/Shanghai
+          WEBUI_HOST=0.0.0.0
+          WEBUI_PORT=${{ vars.WEBUI_PORT || 8000 }}
+          ENVEOF
+
+      - name: 🔐 Log in to GHCR on remote Docker host
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          DOCKER_HOST: ssh://${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}:${{ secrets.DEPLOY_SSH_PORT || 22 }}
+          GIT_SSH_COMMAND: ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no
+
+      - name: 📦 Pull latest image & restart containers
+        env:
+          DOCKER_HOST: ssh://${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}:${{ secrets.DEPLOY_SSH_PORT || 22 }}
+          GIT_SSH_COMMAND: ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no
+          DEPLOY_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+        run: |
+          set -e
+          echo "📦 拉取最新镜像并重启容器..."
+          docker compose \
+            -f ./docker/docker-compose.deploy.yml \
+            up -d --pull always server analyzer
+
+          echo "🧹 清理旧镜像..."
+          docker image prune -f
+
+          echo "✅ 部署完成！运行状态："
+          docker compose -f ./docker/docker-compose.deploy.yml ps
+
+      - name: 🔒 Clean up
+        if: always()
+        run: |
+          rm -f ~/.ssh/deploy_key
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -p ${{ secrets.DEPLOY_SSH_PORT || 22 }} \
+              ${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }} \
+              "rm -f /tmp/deploy.env" 2>/dev/null || true
+
+      - name: 📋 Deploy Summary
+        run: |
+          echo "### 🚀 部署完成" >> $GITHUB_STEP_SUMMARY
+          echo "**服务器:** \`${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**镜像:** \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
